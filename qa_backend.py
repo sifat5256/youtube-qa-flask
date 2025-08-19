@@ -1,7 +1,7 @@
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from youtube_transcript_api import YouTubeTranscriptApi, TranscriptsDisabled, NoTranscriptFound
+from youtube_transcript_api import get_transcript, TranscriptsDisabled, NoTranscriptFound
 import re
 import json
 import os
@@ -82,7 +82,7 @@ async def generate_qa(request: QARequest):
             raise HTTPException(status_code=400, detail="Invalid YouTube URL format")
 
         try:
-            transcript = YouTubeTranscriptApi.get_transcript(video_id, languages=['en', 'bn', 'hi'])
+            transcript = get_transcript(video_id, languages=['en', 'bn', 'hi'])
             transcript_text = " ".join([entry['text'] for entry in transcript])
         except (TranscriptsDisabled, NoTranscriptFound):
             raise HTTPException(status_code=400, detail="Transcript not available for this video")
