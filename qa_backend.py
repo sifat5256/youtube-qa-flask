@@ -1,14 +1,14 @@
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from youtube_transcript_api import YouTubeTranscriptApi
+from youtube_transcript_api import YouTubeTranscriptApi, TranscriptsDisabled, NoTranscriptFound
 import re
 import json
 import os
 from openai import OpenAI
 
 # ✅ Set OpenAI API key
-openai_api_key = os.getenv("OPENAI_API_KEY")  # Get from environment variable
+openai_api_key = os.getenv("OPENAI_API_KEY")  # Must be set in Render
 client = OpenAI(api_key=openai_api_key)
 
 app = FastAPI()
@@ -22,7 +22,8 @@ app.add_middleware(
 
 # Request model
 class QARequest(BaseModel):
-    url: str
+    url: str | None = None
+    transcript: str | None = None
     count: int = 10
 
 # Extract YouTube video ID
@@ -61,30 +62,39 @@ def chunk_text(text: str, max_chunk_size=3000):
 
 @app.post("/generate_qa")
 async def generate_qa(request: QARequest):
-    url = request.url.strip()
     count = request.count
+    transcript_text = ""
 
-    if not url:
-        raise HTTPException(status_code=400, detail="YouTube URL is required")
     if count < 1 or count > 50:
         raise HTTPException(status_code=400, detail="Question count must be between 1 and 50")
 
-    video_id = get_video_id(url)
-    if not video_id:
-        raise HTTPException(status_code=400, detail="Invalid YouTube URL format")
+    # Case 1: User provided transcript directly
+    if request.transcript:
+        transcript_text = request.transcript.strip()
 
-    # Get transcript
-    try:
-        transcript = YouTubeTranscriptApi().fetch(video_id, languages=['en', 'bn', 'hi'])
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Could not fetch transcript: {str(e)}")
+    # Case 2: User provided YouTube URL
+    elif request.url:
+        video_id = get_video_id(request.url.strip())
+        if not video_id:
+            raise HTTPException(status_code=400, detail="Invalid YouTube URL format")
 
-    # ✅ Fix here: use attribute access
-    full_text = " ".join([entry.text for entry in transcript])
-    if len(full_text.strip()) < 100:
+        try:
+            transcript = YouTubeTranscriptApi.get_transcript(video_id, languages=['en', 'bn', 'hi'])
+            transcript_text = " ".join([entry['text'] for entry in transcript])
+        except (TranscriptsDisabled, NoTranscriptFound):
+            raise HTTPException(status_code=400, detail="Transcript not available for this video")
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Could not fetch transcript automatically: {str(e)}")
+
+    else:
+        raise HTTPException(status_code=400, detail="Provide either a YouTube URL or transcript text")
+
+    # Ensure transcript is usable
+    if len(transcript_text.strip()) < 100:
         raise HTTPException(status_code=400, detail="Transcript too short to generate meaningful questions")
 
-    chunks = chunk_text(full_text)
+    # Take first chunk
+    chunks = chunk_text(transcript_text)
     text_to_process = chunks[0]
 
     # Prompt for OpenAI
@@ -119,10 +129,12 @@ Transcript:
         raise HTTPException(status_code=500, detail=f"OpenAI API error: {str(e)}")
 
     result = response.choices[0].message.content.strip()
+
+    # Validate JSON
     try:
         json_result = json.loads(result)
         if isinstance(json_result, list):
-            return {"result": result, "count": len(json_result)}
+            return {"result": json_result, "count": len(json_result)}
         else:
             raise HTTPException(status_code=500, detail="Invalid response format from AI")
     except json.JSONDecodeError:
