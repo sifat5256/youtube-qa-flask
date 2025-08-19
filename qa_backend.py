@@ -9,6 +9,9 @@ from openai import OpenAI
 
 # ✅ Set OpenAI API key
 openai_api_key = os.getenv("OPENAI_API_KEY")  # Must be set in Render
+if not openai_api_key:
+    raise RuntimeError("OPENAI_API_KEY environment variable not set!")
+
 client = OpenAI(api_key=openai_api_key)
 
 app = FastAPI()
@@ -68,11 +71,11 @@ async def generate_qa(request: QARequest):
     if count < 1 or count > 50:
         raise HTTPException(status_code=400, detail="Question count must be between 1 and 50")
 
-    # Case 1: User provided transcript directly
+    # Case 1: User provides transcript directly
     if request.transcript:
         transcript_text = request.transcript.strip()
 
-    # Case 2: User provided YouTube URL
+    # Case 2: User provides YouTube URL
     elif request.url:
         video_id = get_video_id(request.url.strip())
         if not video_id:
@@ -89,7 +92,7 @@ async def generate_qa(request: QARequest):
     else:
         raise HTTPException(status_code=400, detail="Provide either a YouTube URL or transcript text")
 
-    # Ensure transcript is usable
+    # Ensure transcript is long enough
     if len(transcript_text.strip()) < 100:
         raise HTTPException(status_code=400, detail="Transcript too short to generate meaningful questions")
 
@@ -97,7 +100,7 @@ async def generate_qa(request: QARequest):
     chunks = chunk_text(transcript_text)
     text_to_process = chunks[0]
 
-    # Prompt for OpenAI
+    # OpenAI prompt
     prompt = f"""Based on the following transcript, generate exactly {count} educational question-answer pairs in JSON format.
 
 Requirements:
@@ -108,8 +111,7 @@ Requirements:
 
 Format:
 [
-  {{"question": "What is...?", "answer": "The answer is..."}},
-  {{"question": "How does...?", "answer": "It works by..."}}
+  {{"question": "What is...?", "answer": "The answer is..."}}  
 ]
 
 Transcript:
@@ -130,7 +132,7 @@ Transcript:
 
     result = response.choices[0].message.content.strip()
 
-    # Validate JSON
+    
     try:
         json_result = json.loads(result)
         if isinstance(json_result, list):
