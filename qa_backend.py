@@ -7,8 +7,8 @@ import json
 import os
 from openai import OpenAI
 
-# ✅ Set OpenAI API key
-openai_api_key = os.getenv("OPENAI_API_KEY")  # Must be set in Render
+# ✅ OpenAI API key
+openai_api_key = os.getenv("OPENAI_API_KEY")
 if not openai_api_key:
     raise RuntimeError("OPENAI_API_KEY environment variable not set!")
 
@@ -30,7 +30,7 @@ class QARequest(BaseModel):
     count: int = 10
 
 # Extract YouTube video ID
-def get_video_id(url: str):
+def get_video_id(url: str) -> str | None:
     patterns = [
         r"(?:v=|youtu\.be/)([a-zA-Z0-9_-]{11})",
         r"(?:embed/)([a-zA-Z0-9_-]{11})",
@@ -42,8 +42,8 @@ def get_video_id(url: str):
             return match.group(1)
     return None
 
-# Split long transcript into chunks
-def chunk_text(text: str, max_chunk_size=3000):
+# Split transcript into chunks
+def chunk_text(text: str, max_chunk_size=3000) -> list[str]:
     words = text.split()
     chunks = []
     current_chunk = []
@@ -71,11 +71,11 @@ async def generate_qa(request: QARequest):
     if count < 1 or count > 50:
         raise HTTPException(status_code=400, detail="Question count must be between 1 and 50")
 
-    # Case 1: User provides transcript directly
+    # 1️⃣ If user provides transcript directly
     if request.transcript:
         transcript_text = request.transcript.strip()
 
-    # Case 2: User provides YouTube URL
+    # 2️⃣ If user provides YouTube URL
     elif request.url:
         video_id = get_video_id(request.url.strip())
         if not video_id:
@@ -87,8 +87,7 @@ async def generate_qa(request: QARequest):
         except (TranscriptsDisabled, NoTranscriptFound):
             raise HTTPException(status_code=400, detail="Transcript not available for this video")
         except Exception as e:
-            raise HTTPException(status_code=500, detail=f"Could not fetch transcript automatically: {str(e)}")
-
+            raise HTTPException(status_code=500, detail=f"Could not fetch transcript: {str(e)}")
     else:
         raise HTTPException(status_code=400, detail="Provide either a YouTube URL or transcript text")
 
@@ -96,7 +95,7 @@ async def generate_qa(request: QARequest):
     if len(transcript_text.strip()) < 100:
         raise HTTPException(status_code=400, detail="Transcript too short to generate meaningful questions")
 
-    # Take first chunk
+    # Process first chunk
     chunks = chunk_text(transcript_text)
     text_to_process = chunks[0]
 
@@ -111,7 +110,7 @@ Requirements:
 
 Format:
 [
-  {{"question": "What is...?", "answer": "The answer is..."}}  
+  {{"question": "What is...?", "answer": "The answer is..."}}
 ]
 
 Transcript:
@@ -132,7 +131,7 @@ Transcript:
 
     result = response.choices[0].message.content.strip()
 
-    
+    # Validate JSON response
     try:
         json_result = json.loads(result)
         if isinstance(json_result, list):
